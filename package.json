@@ -26,6 +26,6 @@
     "resend": "^6.28.1"
   },
   "devDependencies": {
-    "prisma": "^7.10.0"
+    "prisma": "^6.19.3"
   }
 }
