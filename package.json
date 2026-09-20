@@ -1,5 +1,5 @@
 {
-  "name": "job-tracker",
+  "name": "jobfin",
   "version": "1.0.0",
   "main": "server.mjs",
   "type": "module",
