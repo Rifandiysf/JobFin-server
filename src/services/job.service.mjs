@@ -1,45 +1,32 @@
 import jobModel from "../models/job.model.mjs";
-import { geocodeAddress, calculateRoute } from "./route.service.mjs";
 import userModel from "../models/user.model.mjs";
+import { AppError } from "../utils/app-error.mjs";
+import { normalizeAddressInput } from "../utils/address.mjs";
+import { getHomeLocation, resolveRouteFields, ROUTE_STATUS } from "./route-enrichment.service.mjs";
 
-async function attachRouteData({ userId, companyAddress, data }) {
+async function loadHomeLocation(userId) {
   const user = await userModel.findById(userId);
 
-  if (!companyAddress || !user?.homeLat || !user?.homeLng) return data;
-
-  const { lat, lng } = await geocodeAddress(companyAddress);
-  const route = await calculateRoute({
-    fromLat: Number(user.homeLat),
-    fromLng: Number(user.homeLng),
-    toLat: lat,
-    toLng: lng,
-  });
-
-  return {
-    ...data,
-    companyLat: lat,
-    companyLng: lng,
-    distanceKm: route.distanceKm,
-    durationMin: route.durationMin,
-    routeGeometry: route.geometry,
-    routeFetchedAt: new Date(),
-  };
+  return getHomeLocation(user);
 }
 
 async function createJob(userId, payload) {
-  let data = {
+  const companyAddress = normalizeAddressInput(payload.companyAddress);
+  const home = companyAddress ? await loadHomeLocation(userId) : null;
+  const { fields, outcome } = await resolveRouteFields({ companyAddress, home });
+
+  const job = await jobModel.create({
     userId,
     companyName: payload.companyName,
     position: payload.position,
     status: payload.status || "applied",
     appliedDate: payload.appliedDate ? new Date(payload.appliedDate) : null,
-    companyAddress: payload.companyAddress,
+    companyAddress,
     notes: payload.notes,
-  };
+    ...fields,
+  });
 
-  data = await attachRouteData({ userId, companyAddress: payload.companyAddress, data });
-
-  return jobModel.create(data);
+  return { job, route: outcome };
 }
 
 async function listJobs(userId, { status, search, page = 1, limit = 10 }) {
@@ -65,30 +52,64 @@ async function listJobs(userId, { status, search, page = 1, limit = 10 }) {
 async function getJobById(userId, id) {
   const job = await jobModel.findFirstByUser(Number(id), userId);
   if (!job) {
-    const err = new Error("Application not found");
-    err.statusCode = 404;
-    throw err;
+    throw new AppError("Application not found", 404, "JOB_NOT_FOUND");
   }
   return job;
 }
 
 async function updateJob(userId, id, payload) {
-  await getJobById(userId, id);
+  const existingJob = await getJobById(userId, id);
 
   let data = {
     ...(payload.companyName !== undefined && { companyName: payload.companyName }),
     ...(payload.position !== undefined && { position: payload.position }),
     ...(payload.status !== undefined && { status: payload.status }),
     ...(payload.appliedDate !== undefined && { appliedDate: new Date(payload.appliedDate) }),
-    ...(payload.companyAddress !== undefined && { companyAddress: payload.companyAddress }),
     ...(payload.notes !== undefined && { notes: payload.notes }),
   };
 
+  let routeOutcome = { status: ROUTE_STATUS.UNCHANGED, geocodeAccuracy: null };
+
   if (payload.companyAddress !== undefined) {
-    data = await attachRouteData({ userId, companyAddress: payload.companyAddress, data });
+    const companyAddress = normalizeAddressInput(payload.companyAddress);
+    const home = companyAddress ? await loadHomeLocation(userId) : null;
+    const { fields, outcome } = await resolveRouteFields({ companyAddress, existingJob, home });
+
+    data = { ...data, companyAddress, ...fields };
+    routeOutcome = outcome;
   }
 
-  return jobModel.update(Number(id), data);
+  const job = await jobModel.update(Number(id), data);
+
+  return { job, route: routeOutcome };
+}
+
+async function refreshJobRoute(userId, id) {
+  const existingJob = await getJobById(userId, id);
+
+  if (!normalizeAddressInput(existingJob.companyAddress)) {
+    throw new AppError("This application has no company address.", 422, "COMPANY_ADDRESS_MISSING");
+  }
+
+  const home = await loadHomeLocation(userId);
+  const { fields, outcome } = await resolveRouteFields({
+    companyAddress: existingJob.companyAddress,
+    existingJob,
+    home,
+    forceRouteRecalculation: true,
+  });
+
+  if (outcome.status === ROUTE_STATUS.SERVICE_UNAVAILABLE) {
+    throw new AppError(
+      "The map service is temporarily unavailable. Please try again later.",
+      503,
+      "MAP_SERVICE_UNAVAILABLE"
+    );
+  }
+
+  const job = await jobModel.update(existingJob.id, fields);
+
+  return { job, route: outcome };
 }
 
 async function deleteJob(userId, id) {
@@ -96,4 +117,4 @@ async function deleteJob(userId, id) {
   return jobModel.remove(Number(id));
 }
 
-export { createJob, listJobs, getJobById, updateJob, deleteJob };
+export { createJob, listJobs, getJobById, updateJob, refreshJobRoute, deleteJob };

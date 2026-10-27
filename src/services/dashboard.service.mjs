@@ -16,12 +16,12 @@ async function getSummary(userId) {
 
   return {
     totalApplications: total,
-    byStatus: byStatus.map((s) => ({ status: s.status, count: s._count.status })),
+    byStatus: byStatus.map((statusGroup) => ({ status: statusGroup.status, count: statusGroup._count.status })),
     averageDistanceKm: avgDistance._avg.distanceKm
       ? Number(avgDistance._avg.distanceKm.toFixed(2))
       : null,
     monthlyTrend: Object.entries(trendMap)
-      .sort(([a], [b]) => a.localeCompare(b))
+      .sort(([firstMonth], [secondMonth]) => firstMonth.localeCompare(secondMonth))
       .map(([month, count]) => ({ month, count })),
   };
 }

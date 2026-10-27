@@ -12,8 +12,11 @@ async function getProfile(req, res, next) {
 
 async function updateHomeAddress(req, res, next) {
   try {
-    const user = await userService.updateHomeAddress(req.user.id, req.body.homeAddress);
-    return success(res, 200, "Home address updated successfully", user);
+    const { user, geocodeAccuracy, routeRefresh } = await userService.updateHomeAddress(
+      req.user.id,
+      req.body.homeAddress
+    );
+    return success(res, 200, "Home address updated successfully", user, { geocodeAccuracy, routeRefresh });
   } catch (err) {
     next(err);
   }

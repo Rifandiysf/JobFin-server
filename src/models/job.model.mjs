@@ -1,7 +1,12 @@
+import { Prisma } from "@prisma/client";
 import prisma from "../utils/prisma.client.mjs";
 
+function normalizeJsonFields(data) {
+  return data.routeGeometry === null ? { ...data, routeGeometry: Prisma.DbNull } : data;
+}
+
 function create(data) {
-  return prisma.jobApplication.create({ data });
+  return prisma.jobApplication.create({ data: normalizeJsonFields(data) });
 }
 
 function findMany({ where, skip, take }) {
@@ -22,7 +27,7 @@ function findFirstByUser(id, userId) {
 }
 
 function update(id, data) {
-  return prisma.jobApplication.update({ where: { id }, data });
+  return prisma.jobApplication.update({ where: { id }, data: normalizeJsonFields(data) });
 }
 
 function remove(id) {
@@ -34,6 +39,15 @@ function groupByStatus(userId) {
     by: ["status"],
     where: { userId },
     _count: { status: true },
+  });
+}
+
+function findAddressedByUser(userId, take) {
+  return prisma.jobApplication.findMany({
+    where: { userId, companyAddress: { not: null } },
+    select: { id: true, companyAddress: true, companyLat: true, companyLng: true, distanceKm: true },
+    orderBy: { createdAt: "desc" },
+    take,
   });
 }
 
@@ -59,6 +73,7 @@ export default {
   update,
   remove,
   groupByStatus,
+  findAddressedByUser,
   averageDistance,
   findAppliedDatesByUser,
 };

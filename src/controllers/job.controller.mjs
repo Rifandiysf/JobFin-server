@@ -1,10 +1,17 @@
-import { createJob, deleteJob, getJobById, listJobs, updateJob } from "../services/job.service.mjs";
+import {
+  createJob,
+  deleteJob,
+  getJobById,
+  listJobs,
+  refreshJobRoute,
+  updateJob,
+} from "../services/job.service.mjs";
 import { success } from "../utils/response.mjs";
 
 async function create(req, res, next) {
   try {
-    const job = await createJob(req.user.id, req.body);
-    return success(res, 201, "Job application added successfully", job);
+    const { job, route } = await createJob(req.user.id, req.body);
+    return success(res, 201, "Job application added successfully", job, { route });
   } catch (err) {
     next(err);
   }
@@ -35,8 +42,17 @@ async function detail(req, res, next) {
 
 async function update(req, res, next) {
   try {
-    const job = await updateJob(req.user.id, req.params.id, req.body);
-    return success(res, 200, "Job application updated successfully", job);
+    const { job, route } = await updateJob(req.user.id, req.params.id, req.body);
+    return success(res, 200, "Job application updated successfully", job, { route });
+  } catch (err) {
+    next(err);
+  }
+}
+
+async function refreshRoute(req, res, next) {
+  try {
+    const { job, route } = await refreshJobRoute(req.user.id, req.params.id);
+    return success(res, 200, "Route refreshed successfully", job, { route });
   } catch (err) {
     next(err);
   }
@@ -51,4 +67,4 @@ async function remove(req, res, next) {
   }
 }
 
-export default { create, list, detail, update, remove };
+export default { create, list, detail, update, refreshRoute, remove };

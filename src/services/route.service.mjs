@@ -1,86 +1,59 @@
-const NOMINATIM_URL = "https://nominatim.openstreetmap.org/search";
-const OSRM_URL = "https://router.project-osrm.org/route/v1/driving";
+import { mapConfig } from "../config/map.config.mjs";
+import { AppError } from "../utils/app-error.mjs";
+import { createRequestThrottle } from "../utils/request-throttle.mjs";
+import { requestJson } from "../utils/upstream-request.mjs";
 
-async function geocodeAddress(address) {
-  const queries = [
-    address,
-    address.replace(/\bNo\.?\s*\d+\b/gi, ""),
-    address
-      .replace(/\bNo\.?\s*\d+\b/gi, "")
-      .replace(/Kec\.?\s*[^,]+,?/gi, "")
-      .replace(/\b\d{5}\b/g, ""),
-  ];
+const GEOMETRY_COORDINATE_DECIMALS = 5;
 
-  const uniqueQueries = [
-    ...new Set(
-      queries.map((query) =>
-        query.replace(/\s+/g, " ").replace(/,\s*,/g, ",").trim()
-      )
-    ),
-  ];
+const osrmThrottle = createRequestThrottle({
+  minIntervalMs: mapConfig.minRequestIntervalMs,
+  maxQueuedRequests: mapConfig.maxQueuedRequests,
+});
 
-  for (const query of uniqueQueries) {
-    const params = new URLSearchParams({
-      q: query,
-      format: "jsonv2",
-      limit: "1",
-      countrycodes: "id",
-      addressdetails: "1",
-    });
+function roundCoordinate(coordinate) {
+  return Number(coordinate.toFixed(GEOMETRY_COORDINATE_DECIMALS));
+}
 
-    const res = await fetch(`${NOMINATIM_URL}?${params}`, {
-      headers: {
-        "User-Agent": "JobFin/1.0 (rifandiyusuf47@gmail.com)",
-        "Accept-Language": "id",
-      },
-    });
+function assertValidPoint(latitude, longitude, pointName) {
+  const isValid =
+    Number.isFinite(latitude) &&
+    Number.isFinite(longitude) &&
+    Math.abs(latitude) <= 90 &&
+    Math.abs(longitude) <= 180;
 
-    if (!res.ok) {
-      console.log("Nominatim error:", res.status);
-      continue;
-    }
-
-    const data = await res.json();
-
-    if (data.length > 0) {
-      const result = data[0];
-
-      return {
-        lat: parseFloat(result.lat),
-        lng: parseFloat(result.lon),
-        displayName: result.display_name,
-      };
-    }
+  if (!isValid) {
+    throw new AppError(`The ${pointName} coordinates are invalid.`, 422, "INVALID_COORDINATES");
   }
-
-  const err = new Error(
-    `Address "${address}" not found.`
-  );
-
-  err.statusCode = 422;
-
-  throw err;
 }
 
 async function calculateRoute({ fromLat, fromLng, toLat, toLng }) {
-  const url = `${OSRM_URL}/${fromLng},${fromLat};${toLng},${toLat}?overview=full&geometries=geojson`;
+  assertValidPoint(fromLat, fromLng, "origin");
+  assertValidPoint(toLat, toLng, "destination");
 
-  const res = await fetch(url);
-  const data = await res.json();
+  const parameters = new URLSearchParams({ overview: "full", geometries: "geojson" });
+  const coordinatePath = `${fromLng},${fromLat};${toLng},${toLat}`;
 
-  if (data.code !== "Ok" || !data.routes?.length) {
-    const err = new Error("Unable to calculate a route for these coordinates.");
-    err.statusCode = 422;
-    throw err;
+  const payload = await requestJson({
+    url: `${mapConfig.osrmUrl}/${coordinatePath}?${parameters}`,
+    throttle: osrmThrottle,
+    serviceName: "routing service",
+  });
+
+  if (payload?.code !== "Ok" || !payload.routes?.length) {
+    throw new AppError("Unable to calculate a route for these coordinates.", 422, "NO_ROUTE_FOUND");
   }
 
-  const route = data.routes[0];
+  const [bestRoute] = payload.routes;
 
   return {
-    distanceKm: Number((route.distance / 1000).toFixed(2)),
-    durationMin: Math.round(route.duration / 60),
-    geometry: route.geometry.coordinates,
+    distanceKm: Number((bestRoute.distance / 1000).toFixed(2)),
+    durationMin: Math.round(bestRoute.duration / 60),
+    geometry: bestRoute.geometry.coordinates.map(([longitude, latitude]) => [
+      roundCoordinate(longitude),
+      roundCoordinate(latitude),
+    ]),
   };
 }
 
-export { geocodeAddress, calculateRoute };
+export { calculateRoute };
+export { geocodeAddress } from "./geocoding.service.mjs";

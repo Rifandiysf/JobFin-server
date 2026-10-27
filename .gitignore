@@ -5,3 +5,9 @@ node_modules
 /src/generated/prisma
 
 /src/generated/prisma
+
+# Production File
+.gitlab-ci.yml
+docker-compose.yml
+Dockerfile
+.dockerignore
